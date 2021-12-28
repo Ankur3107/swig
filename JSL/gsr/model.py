@@ -289,6 +289,7 @@ class ResNet_RetinaNet_RNN(nn.Module):
             bbox_pred_list = []
         else:
             noun_predicts = []
+            noun_predicts_probs = []
             bbox_predicts = []
             bbox_exist_list = []
 
@@ -317,7 +318,7 @@ class ResNet_RetinaNet_RNN(nn.Module):
             noun_pred = torch.cat((roi_features, rnn_output), dim=1)
             noun_pred = self.vocab_linear(noun_pred)
             noun_pred = self.vocab_linear_2(self.relu(noun_pred))
-            classification_guess = torch.argmax(noun_pred, dim=1)
+            classification_guess_probs, classification_guess = noun_pred.max(dim=1) #torch.argmax(noun_pred, dim=1)
 
             if return_local_features:
                 local_features.append(roi_features)
@@ -342,6 +343,7 @@ class ResNet_RetinaNet_RNN(nn.Module):
             else:
                 bbox_predicts.append(previous_boxes)
                 noun_predicts.append(classification_guess)
+                noun_predicts_probs.append(classification_guess_probs)
                 bbox_exist_list.append(bbox_exist)
 
         if return_local_features:
@@ -361,9 +363,9 @@ class ResNet_RetinaNet_RNN(nn.Module):
 
         else:
             if return_local_features:
-                return verb, noun_predicts, bbox_predicts, bbox_exist_list, all_local_features
+                return verb, noun_predicts_probs, noun_predicts, bbox_predicts, bbox_exist_list, all_local_features
 
-            return verb, noun_predicts, bbox_predicts, bbox_exist_list
+            return verb, noun_predicts_probs, noun_predicts, bbox_predicts, bbox_exist_list
 
 
     def class_and_reg_branch(self, batch_size, rnn_output, features, just_rnn):

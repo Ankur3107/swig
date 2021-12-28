@@ -49,4 +49,6 @@ class ImsituVerb(nn.Module):
         if is_train:
             return self.loss_function(verb_pred, verb.long().squeeze()), torch.argmax(verb_pred, dim=1)
         else:
-            return torch.argmax(verb_pred, dim=1), torch.topk(verb_pred, 5, dim=1)[1]
+            verb_topk = torch.topk(verb_pred, 5, dim=1)[1]
+            verb_pred_probs, verb_pred = verb_pred.max(dim=1)
+            return verb_pred_probs, verb_pred, verb_topk

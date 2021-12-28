@@ -58,7 +58,7 @@ def main():
     model = torch.nn.DataParallel(model).cuda()
     x = torch.load(args.verb_path)
     model.module.load_state_dict(x['state_dict'])
-    results = eval(model, test_dataloader, idx_to_verb, args)
+    results_probs, results = eval(model, test_dataloader, idx_to_verb, args)
 
     with open('./SWiG_jsons/imsitu_space.json') as f:
         all = json.load(f)
@@ -79,10 +79,10 @@ def main():
     retinanet.module.load_state_dict(x['state_dict'], strict = False)
     print('weights loaded')
 
-    evaluate(retinanet, dataloader_val, args, dataset_val, dataset_val, verb_orders, noun_dict, idx_to_verb, args.store_features)
+    evaluate(retinanet, dataloader_val, args, dataset_val, dataset_val, verb_orders, noun_dict, idx_to_verb, args.store_features, results_probs)
 
 
-def evaluate(retinanet, dataloader_val, parser, dataset_val, dataset_train, verb_orders, noun_dict, idx_to_verb, store_features):
+def evaluate(retinanet, dataloader_val, parser, dataset_val, dataset_train, verb_orders, noun_dict, idx_to_verb, store_features, verb_probs_dict):
     retinanet.training = False
     retinanet.eval()
     k = 0
@@ -102,14 +102,15 @@ def evaluate(retinanet, dataloader_val, parser, dataset_val, dataset_train, verb
 
         with torch.no_grad():
             if store_features:
-                verb_guess, noun_predicts, bbox_predicts, bbox_exists, local_features = retinanet(x, annotations, y, widths, heights, 1, use_gt_verb=True, return_local_features=True)
+                verb_guess, noun_predicts_probs, noun_predicts, bbox_predicts, bbox_exists, local_features = retinanet(x, annotations, y, widths, heights, 1, use_gt_verb=True, return_local_features=True)
             else:
-                verb_guess, noun_predicts, bbox_predicts, bbox_exists = retinanet(x, annotations, y, widths, heights, 1, use_gt_verb=True)
+                verb_guess, noun_predicts_probs, noun_predicts, bbox_predicts, bbox_exists = retinanet(x, annotations, y, widths, heights, 1, use_gt_verb=True)
 
         for i in range(len(verb_guess)):
             image = data['img_name'][i].split('/')[-1]
             verb = dataset_train.idx_to_verb[verb_guess[i]]
             nouns = []
+            nouns_probs = []
             bboxes = []
 
             if store_features:
@@ -125,7 +126,8 @@ def evaluate(retinanet, dataloader_val, parser, dataset_val, dataset_train, verb
                 if dataset_train.idx_to_class[noun_predicts[j][i]] == 'blank':
                     nouns.append('')
                 else:
-                    nouns.append(dataset_train.idx_to_class[noun_predicts[j][i]])
+                    nouns.append(noun_dict[dataset_train.idx_to_class[noun_predicts[j][i]]])
+                    nouns_probs.append(noun_predicts_probs[j][i].cpu().numpy().tolist())
                 if bbox_exists[j][i] > 0:
                     bbox_predicts[j][i][0] = max(bbox_predicts[j][i][0] - shift_1[i], 0)
                     bbox_predicts[j][i][1] = max(bbox_predicts[j][i][1] - shift_0[i], 0)
@@ -138,12 +140,17 @@ def evaluate(retinanet, dataloader_val, parser, dataset_val, dataset_train, verb
                     bboxes.append(None)
             if store_features:
                 features.close()
-            results[image] = {'verb': idx_to_verb[y[i]], 'nouns': nouns, 'boxes': bboxes}
+            results[image] = {'verb': idx_to_verb[y[i]], 'nouns': nouns, 'nouns_probs':nouns_probs, 'boxes': bboxes}
+    results = add_verb_probs(results, verb_probs_dict)
     with open('results.json', 'w') as f:
         json.dump(results, f, indent=4)
     print("complete. Results written to results.json")
 
-
+def add_verb_probs(results, verb_probs_dict):
+    for image, prob in verb_probs_dict.items():
+        image = image.split('/')[-1]
+        results[image]['verb_prob'] = prob
+    return results
 
 
 def eval(model, data_loader, idx_to_verb, parser):
@@ -151,6 +158,7 @@ def eval(model, data_loader, idx_to_verb, parser):
     print()
     print("predicting verbs for each image...")
     results = {}
+    results_probs = {}
     k = 0
     with torch.no_grad():
         for sample in data_loader:
@@ -158,12 +166,13 @@ def eval(model, data_loader, idx_to_verb, parser):
                 print(str(k) + " out of " + str(len(data_loader) / parser.batch_size))
             words = sample["im_name"]
             image_names = (sample["image"].cuda())
-            verb, top_5_verb = model(1, image_names, False, is_train=False)
+            verb_probs, verb, top_5_verb = model(1, image_names, False, is_train=False)
             for i in range(len(words)):
                 results[words[i]] = int(verb[i])
+                results_probs[words[i]] = verb_probs[i].cpu().numpy().tolist()
             k += 1
     print("verbs complete")
-    return results
+    return results_probs, results
 
 
 def get_mapping(word_file):
@@ -235,8 +244,3 @@ def save_checkpoint(state, filename="checkpoint.pth.tar"):
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
